@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+langchain
+langchain-openai
+tavily-python
+google-maps-services-python
+python-dotenv
