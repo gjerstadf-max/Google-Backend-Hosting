@@ -15,10 +15,10 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy local code to the container image.
-COPY requirements.txt .
+# This copies EVERYTHING in your repo at once (including requirements.txt)
+COPY . . 
 
-# Install Python dependencies
+# Now run the install (the file is guaranteed to be there now)
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of your application code
