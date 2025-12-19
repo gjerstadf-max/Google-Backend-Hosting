@@ -27,4 +27,6 @@ ENV PORT=8080
 
 # Start the application
 # Ensure your python file is named 'main.py' and the app instance is 'app'
-CMD exec uvicorn main:app --host 0.0.0.0 --port ${PORT}
+# Use this exact line (no brackets, no 'exec' keyword)
+CMD uvicorn main:app --host 0.0.0.0 --port $PORT
+
