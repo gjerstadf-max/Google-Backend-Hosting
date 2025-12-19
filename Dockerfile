@@ -1,30 +1,25 @@
-# Use the official lightweight Python image.
-# https://hub.docker.com/_/python
+# Use the official lightweight Python image
 FROM python:3.11-slim
 
-# Allow statements and log messages to immediately appear in the logs
-ENV PYTHONUNBUFFERED True
-
-# Set the working directory in the container
+# Set the working directory inside the container
 WORKDIR /app
 
-# Install system dependencies
-# We include 'curl' for health checks and 'libmagic' if you handle files
+# Install system tools (needed for some Python libraries)
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# This copies EVERYTHING in your repo at once (including requirements.txt)
-COPY . . 
-
-# Now run the install (the file is guaranteed to be there now)
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy the rest of your application code
+# Copy EVERYTHING from your GitHub repo into the container
+# (This includes main.py, requirements.txt, etc.)
 COPY . .
 
-# Run the web service on container startup.
-# We use uvicorn to run the FastAPI app. 
-# Cloud Run tells us which PORT to use via an environment variable.
-CMD exec uvicorn main:app --host 0.0.0.0 --port $PORT
+# Install the Python libraries
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Tell Google Cloud to listen on the correct port
+ENV PORT=8080
+
+# Start the application
+# Ensure your python file is named 'main.py' and the app instance is 'app'
+CMD exec uvicorn main:app --host 0.0.0.0 --port ${PORT}
