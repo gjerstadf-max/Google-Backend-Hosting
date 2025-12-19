@@ -1,32 +1,17 @@
-# Change your first line to this:
 FROM --platform=linux/amd64 python:3.11-slim
 
-# ... the rest of your Dockerfile stays the same
-
-# Use the official lightweight Python image
-FROM python:3.11-slim
-
-# Set the working directory inside the container
+# 1. Set the working directory
 WORKDIR /app
 
-# Install system tools (needed for some Python libraries)
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# 2. Copy requirements FIRST (to take advantage of caching)
+COPY requirements.txt .
 
-# Copy EVERYTHING from your GitHub repo into the container
-# (This includes main.py, requirements.txt, etc.)
-COPY . .
-
-# Install the Python libraries
+# 3. Install the libraries
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Tell Google Cloud to listen on the correct port
-ENV PORT=8080
+# 4. Copy the rest of your code
+COPY . .
 
-# Start the application
-# Ensure your python file is named 'main.py' and the app instance is 'app'
-# Use this exact line (no brackets, no 'exec' keyword)
+# 5. Start the app
 CMD uvicorn main:app --host 0.0.0.0 --port $PORT
 
