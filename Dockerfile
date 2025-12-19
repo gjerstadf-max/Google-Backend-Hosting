@@ -1,3 +1,8 @@
+# Change your first line to this:
+FROM --platform=linux/amd64 python:3.11-slim
+
+# ... the rest of your Dockerfile stays the same
+
 # Use the official lightweight Python image
 FROM python:3.11-slim
 
