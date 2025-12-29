@@ -1,103 +1,67 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
 import os
-from tavily import TavilyClient
-from openai import OpenAI
 import json
-import re
+from fastapi import FastAPI, HTTPException
+
+from dotenv import load_dotenv
+load_dotenv()
 
 app = FastAPI()
 
-# --- API clients ---
-tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-# --- Health endpoint ---
 @app.get("/")
 def health():
-    return {"status": "Cloud Run is alive"}
+    return {"status": "ok"}
 
-# --- Request body model ---
-class SummarizeRequest(BaseModel):
-    query: str
-
-# --- Helper: Chunk text to avoid token overflow ---
-def chunk_text(text: str, max_chars: int = 4000):
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = start + max_chars
-        chunks.append(text[start:end])
-        start = end
-    return chunks
-
-# --- Summarize endpoint ---
 @app.post("/summarize")
-def summarize(req: SummarizeRequest):
-    query = req.query
+def summarize(payload: dict):
+    from tavily import TavilyClient
+    from openai import OpenAI
 
-    # 1️⃣ Search Tavily
-    search_results = tavily.search(
-        query=query,
-        search_depth="advanced",
-        max_results=5
-    )
+    tavily_key = os.getenv("TAVILY_API_KEY")
+    openai_key = os.getenv("OPENAI_API_KEY")
 
-    documents = [
-        r.get("content", "")
-        for r in search_results.get("results", [])
-        if r.get("content")
-    ]
+    if not tavily_key or not openai_key:
+        raise HTTPException(status_code=500, detail="Missing API keys")
 
-    if not documents:
-        return {"error": "No content found"}
+    query = payload.get("query")
+    if not query:
+        raise HTTPException(status_code=400, detail="Missing query")
 
-    combined_text = "\n\n".join(documents)
-    chunks = chunk_text(combined_text)
+    tavily = TavilyClient(api_key=tavily_key)
+    client = OpenAI(api_key=openai_key)
 
-    # 2️⃣ Summarize each chunk
-    partial_summaries = []
-    for chunk in chunks:
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a financial and public sentiment analyst.\n"
-                        "Summarize the following text into concise bullet points, separating positives, negatives, and risks. "
-                        "Keep it short and clear, output valid JSON only."
-                    )
-                },
-                {"role": "user", "content": chunk}
-            ],
-            max_tokens=250
-        )
-        partial_summaries.append(resp.choices[0].message.content.strip())
+    search = tavily.search(query=query, max_results=5)
+    content = "\n".join(r["content"] for r in search["results"])
 
-    # 3️⃣ Combine partial summaries and generate final JSON
-    final_input = "\n\n".join(partial_summaries)
+    prompt = f"""
+Return ONLY valid JSON in this format:
 
-    final_resp = client.chat.completions.create(
+{{
+  "summary": "brief summary",
+  "sentiment": {{
+    "positive": ["..."],
+    "negative": ["..."],
+    "risks": ["..."],
+    "overall_sentiment": "Positive | Neutral | Negative"
+    If there are no items, return an empty array.
+    "confidence": 0.0  # confidence score between 0 and 1.
+    Confidence shoulde be a number between 0 and 1.
+  }}
+}}
+
+Content:
+{content}
+"""
+
+    response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Combine the following summaries into a single structured JSON object:\n"
-                    "- sentiment: Bullish, Bearish, Neutral, or Mixed\n"
-                    "- positives: array of concise bullet points\n"
-                    "- negatives: array of concise bullet points\n"
-                    "- risks: array of concise bullet points\n"
-                    "- summary: 3–5 sentence executive summary\n"
-                    "Output JSON ONLY inside triple backticks, no extra text."
-                )
-            },
-            {"role": "user", "content": final_input}
+            {"role": "system", "content": "Return JSON only."},
+            {"role": "user", "content": prompt}
         ],
-        max_tokens=400
+        temperature=0.1
     )
 
-    # 4️⃣ Extract JSON reliably
-    raw_output = final_resp.choices[0].message.content
-    match = re.search(r"```(?:json)?\s*(.*)```", raw_output, re.DOTALL)_
+    raw = response.choices[0].message.content.strip()
+    raw = raw[raw.find("{"): raw.rfind("}") + 1]
+
+    return json.loads(raw)
