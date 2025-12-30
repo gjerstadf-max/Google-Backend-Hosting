@@ -1,6 +1,5 @@
 name: Deploy to Cloud Run from feature branch
 
-# Trigger deployment on pushes to your feature branch
 on:
   push:
     branches:
@@ -15,17 +14,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 2. Set up Google Cloud
+      # 2. Set up Google Cloud SDK
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
           service_account_key: ${{ secrets.GOOGLE_CLOUD_KEYFILE_JSON }}
 
-      # 3. Deploy to Cloud Run
+      # 3. Optional: verify project is set
+      - name: Verify GCP project
+        run: gcloud config list
+
+      # 4. Deploy to Cloud Run
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy fastapi-test \
             --source . \
             --region us-central1 \
+            --project ${{ secrets.GOOGLE_CLOUD_PROJECT }} \
             --allow-unauthenticated
