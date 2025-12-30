@@ -20,22 +20,23 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
-          version: "431.0.0"  # Use latest stable if desired okay
+          version: "431.0.0"
 
-      # 3️⃣ Authenticate with GCP using the JSON secret
+      # 3️⃣ Authenticate to GCP using secret
       - name: Authenticate to GCP
         run: |
           printf '%s' "${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}" > key.json
           gcloud auth activate-service-account --key-file=key.json
           gcloud config set project testreview-481618
           rm key.json
+        shell: bash
 
-      # 4️⃣ Configure Docker for GCP Artifact Registry (if needed)
+      # 4️⃣ Configure Docker for Artifact Registry
       - name: Configure Docker
         run: gcloud auth configure-docker
 
-      # 5️⃣ Build Docker image
-      - name: Build Docker image
+      # 5️⃣ Build and push Docker image
+      - name: Build and push Docker image
         run: |
           IMAGE="us-central1-docker.pkg.dev/testreview-481618/fastapi-repo/fastapi-app:latest"
           docker build -t $IMAGE .
