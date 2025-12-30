@@ -1,54 +1,31 @@
-name: Cloud Run Deploy
+name: Deploy to Cloud Run from feature branch
 
+# Trigger deployment on pushes to your feature branch
 on:
   push:
     branches:
-      - main  # change to your feature branch if needed
+      - featurs/summarize-endpoint
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout the repo
-      - name: Checkout code
+      # 1. Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 2️⃣ Set up Python
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      # 2. Set up Google Cloud
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
         with:
-          python-version: '3.11'
+          project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+          service_account_key: ${{ secrets.GOOGLE_CLOUD_KEYFILE_JSON }}
 
-      # 3️⃣ Install dependencies
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      # 4️⃣ Run tests (optional)
-      - name: Run tests
-        run: |
-          # Add your test command here
-          echo "No tests defined yet"
-
-      # 5️⃣ Authenticate to Google Cloud
-      - name: Set up GCP credentials
-        uses: google-github-actions/auth@v1
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
-
-      # 6️⃣ Configure gcloud
-      - name: Configure gcloud
-        run: |
-          gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
-          gcloud config set run/region us-central1
-
-      # 7️⃣ Deploy to Cloud Run
+      # 3. Deploy to Cloud Run
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy fastapi-test \
             --source . \
             --region us-central1 \
-            --platform managed \
-            --quiet
+            --allow-unauthenticated
