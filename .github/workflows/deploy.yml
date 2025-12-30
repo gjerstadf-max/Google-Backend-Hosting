@@ -20,7 +20,7 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
-          version: "431.0.0"  # Use latest stable if desired
+          version: "431.0.0"  # Use latest stable if desired okay
 
       # 3️⃣ Authenticate with GCP using the JSON secret
       - name: Authenticate to GCP
