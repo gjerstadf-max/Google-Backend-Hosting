@@ -10,24 +10,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout code
+      # 1. Checkout the repo
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 2. Set up Google Cloud SDK and authenticate
+      # 2. Set up Google Cloud SDK and authenticate with service account
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
           service_account_key: ${{ secrets.GOOGLE_CLOUD_KEYFILE_JSON }}
 
-      # 3. Debug: verify authentication and project
-      - name: Verify auth and project
+      # 3. Force gcloud to use the service account explicitly
+      - name: Activate service account
         run: |
-          echo "Active account:"
+          gcloud auth activate-service-account --key-file=${{ secrets.GOOGLE_CLOUD_KEYFILE_JSON }}
+          gcloud config set project ${{ secrets.GOOGLE_CLOUD_PROJECT }}
           gcloud auth list
-          echo "Current project:"
-          gcloud config list --format='value(core.project)'
+          gcloud config list
 
       # 4. Deploy to Cloud Run
       - name: Deploy to Cloud Run
