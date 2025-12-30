@@ -27,7 +27,7 @@ jobs:
         run: |
           printf '%s' "${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}" > key.json
           gcloud auth activate-service-account --key-file=key.json
-          gcloud config set project your-gcp-project-id
+          gcloud config set project testreview-481618
           rm key.json
 
       # 4️⃣ Configure Docker for GCP Artifact Registry (if needed)
