@@ -19,12 +19,12 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
-          service_account_key: ${{ secrets.GOOGLE_CLOUD_KEYFILE_JSON }}
+          service_account_key: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
 
       # 3. Activate service account safely
       - name: Activate service account (safe write)
         run: |
-          printf '%s' "${{ secrets.GOOGLE_CLOUD_KEYFILE_JSON }}" > key.json
+          printf '%s' "${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}" > key.json
           gcloud auth activate-service-account --key-file=key.json
           gcloud config set project ${{ secrets.GOOGLE_CLOUD_PROJECT }}
           gcloud auth list
