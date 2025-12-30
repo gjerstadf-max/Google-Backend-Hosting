@@ -21,9 +21,11 @@ jobs:
           project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
           service_account_key: ${{ secrets.GOOGLE_CLOUD_KEYFILE_JSON }}
 
-      # 3. Optional: verify project is set
-      - name: Verify GCP project
-        run: gcloud config list
+      # 3. Debug: show that project secret is available
+      - name: Debug GCP project
+        run: |
+          echo "GCP Project secret is set"
+          gcloud config list
 
       # 4. Deploy to Cloud Run
       - name: Deploy to Cloud Run
