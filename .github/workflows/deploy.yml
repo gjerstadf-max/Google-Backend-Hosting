@@ -14,18 +14,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 2. Set up Google Cloud SDK
+      # 2. Set up Google Cloud SDK and authenticate
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
           service_account_key: ${{ secrets.GOOGLE_CLOUD_KEYFILE_JSON }}
 
-      # 3. Debug: show that project secret is available
-      - name: Debug GCP project
+      # 3. Debug: verify authentication and project
+      - name: Verify auth and project
         run: |
-          echo "GCP Project secret is set"
-          gcloud config list
+          echo "Active account:"
+          gcloud auth list
+          echo "Current project:"
+          gcloud config list --format='value(core.project)'
 
       # 4. Deploy to Cloud Run
       - name: Deploy to Cloud Run
