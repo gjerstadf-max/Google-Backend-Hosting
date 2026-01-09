@@ -1,121 +1,213 @@
 import os
 import json
 import logging
-from fastapi import FastAPI, HTTPException, Request
+from typing import List, Optional
+
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
-
-# Load env locally
-if os.getenv("ENV") != "CLOUD":
-    load_dotenv()
 
 from openai import OpenAI
 from tavily import TavilyClient
 
-# ---- logging ----
+# -------------------------
+# Environment
+# -------------------------
+if os.getenv("ENV") != "CLOUD":
+    load_dotenv()
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+
+if not OPENAI_API_KEY:
+    raise RuntimeError("OPENAI_API_KEY missing")
+
+if not TAVILY_API_KEY:
+    raise RuntimeError("TAVILY_API_KEY missing")
+
+# -------------------------
+# Logging
+# -------------------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(levelname)s | %(message)s"
 )
 logger = logging.getLogger("api")
 
-# ---- app ----
-app = FastAPI()
-
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    logger.info(f"{request.method} {request.url.path}")
-    response = await call_next(request)
-    logger.info(f"→ {response.status_code}")
-    return response
-
-# ---- keys ----
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
-
-if not OPENAI_API_KEY:
-    raise RuntimeError("OPENAI_API_KEY is missing")
-if not TAVILY_API_KEY:
-    raise RuntimeError("TAVILY_API_KEY is missing")
-
-client = OpenAI(api_key=OPENAI_API_KEY)
+# -------------------------
+# Clients
+# -------------------------
+llm = OpenAI(api_key=OPENAI_API_KEY)
 tavily = TavilyClient(api_key=TAVILY_API_KEY)
 
-# ---- models ----
-class SummarizeRequest(BaseModel):
+# -------------------------
+# FastAPI
+# -------------------------
+app = FastAPI(title="Restaurant Analysis API")
+
+# -------------------------
+# Models
+# -------------------------
+class AnalyzeRequest(BaseModel):
     query: str
-    role: str = "financial analyst"
+    preferences: Optional[List[str]] = []
 
-class AnalysisResponse(BaseModel):
+
+class RestaurantResult(BaseModel):
+    name: str
+    summary: str
+
+
+class AnalyzeResponse(BaseModel):
     headline: str
-    detail: str
-    key_points: list[str]
-    sentiment: str
+    restaurants: List[RestaurantResult]
+    confidence: int
+    sources: List[str]
 
-# ---- routes ----
+
+# -------------------------
+# Utilities
+# -------------------------
+def safe_json_from_llm(raw: str, stage: str) -> dict:
+    if not raw or not raw.strip():
+        raise HTTPException(
+            status_code=500,
+            detail=f"{stage} returned empty output"
+        )
+
+    start = raw.find("{")
+    end = raw.rfind("}")
+
+    if start == -1 or end == -1:
+        raise HTTPException(
+            status_code=500,
+            detail=f"{stage} returned non-JSON output"
+        )
+
+    try:
+        return json.loads(raw[start:end + 1])
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=500,
+            detail=f"{stage} JSON parsing failed"
+        )
+
+
+def llm_call(system: str, user: str, temperature: float = 0.2) -> str:
+    response = llm.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        temperature=temperature,
+    )
+    return response.choices[0].message.content or ""
+
+
+# -------------------------
+# Routes
+# -------------------------
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
-@app.post("/summarize", response_model=AnalysisResponse)
-def summarize(req: SummarizeRequest):
-    try:
-        logger.info(f"Searching for: {req.query}")
 
-        search = tavily.search(
-            query=req.query,
-            max_results=5,
-        )
+@app.post("/analyze", response_model=AnalyzeResponse)
+def analyze(req: AnalyzeRequest):
+    logger.info(f"Analyze: {req.query}")
 
-        # Build strong context
-        results = search.get("results", [])[:3]  # top 3 only
+    # -------------------------
+    # Stage 1 — Search
+    # -------------------------
+    search = tavily.search(
+        query=f"best restaurants {req.query}",
+        max_results=6,
+    )
 
-        context = "\n\n".join(
-    f"Source {i+1}: {r['content'][:800]}"
-    for i, r in enumerate(results)
-)
+    results = search.get("results", [])
+    if not results:
+        raise HTTPException(status_code=400, detail="No search results")
 
-        if not context.strip():
-            raise ValueError("No search content returned")
+    contents = [r["content"] for r in results if r.get("content")]
+    if not contents:
+        raise HTTPException(status_code=400, detail="No usable content")
 
-        prompt = f"""
-Return ONLY valid JSON.
+    context = "\n\n".join(contents)
+    sources = [r["url"] for r in results if r.get("url")]
 
-STRICT RULE:
-- Headline must NOT reuse phrases from Detail 1
-- Detail: deeper explanation, NOT repeating headline
-- Provide bullet-style key points
-- Assign sentiment
+    # -------------------------
+    # Stage 2 — Fact Extraction
+    # -------------------------
+    extract_prompt = f"""
+Extract restaurants from the text below.
 
-JSON format:
+Return JSON only:
+
 {{
-  "headline": "...",
-  "detail": "...",
-  "key_points": ["...", "..."],
-  "sentiment": "Positive | Neutral | Negative"
+  "restaurants": [
+    {{
+      "name": "Restaurant name",
+      "facts": "Key facts"
+    }}
+  ]
 }}
 
-Content:
+TEXT:
 {context}
 """
 
-        completion = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": f"You are a {req.role}."},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.15,
-        )
+    raw_extract = llm_call(
+        system="You extract structured restaurant facts.",
+        user=extract_prompt
+    )
 
-        raw = completion.choices[0].message.content.strip()
-        raw = raw[raw.find("{"): raw.rfind("}") + 1]
+    extracted = safe_json_from_llm(raw_extract, "Fact extraction")
+    restaurants = extracted.get("restaurants", [])
 
-        result = json.loads(raw)
+    if not restaurants:
+        raise HTTPException(status_code=400, detail="No restaurants identified")
 
-        logger.info("Summarization successful")
-        return result
+    # -------------------------
+    # Stage 3 — Synthesis
+    # -------------------------
+    prefs = ", ".join(req.preferences) if req.preferences else "general dining"
 
-    except Exception as e:
-        logger.exception("Summarization failed")
-        raise HTTPException(status_code=500, detail=str(e))
+    synth_prompt = f"""
+You are a restaurant critic.
+
+User preferences: {prefs}
+
+Create a clear headline and a short summary for each restaurant.
+
+Return JSON only:
+
+{{
+  "headline": "...",
+  "restaurants": [
+    {{
+      "name": "...",
+      "summary": "..."
+    }}
+  ],
+  "confidence": 0-100
+}}
+
+Restaurants:
+{json.dumps(restaurants, indent=2)}
+"""
+
+    raw_synth = llm_call(
+        system="You write polished restaurant reviews.",
+        user=synth_prompt,
+        temperature=0.3
+    )
+
+    final = safe_json_from_llm(raw_synth, "LLM synthesis")
+
+    return {
+        "headline": final.get("headline", "Restaurant analysis"),
+        "restaurants": final.get("restaurants", []),
+        "confidence": final.get("confidence", 80),
+        "sources": sources,
+    }
