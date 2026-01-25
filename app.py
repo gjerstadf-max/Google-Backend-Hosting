@@ -3,210 +3,173 @@ import requests
 
 API_URL = "http://127.0.0.1:8080/analyze"
 
-st.set_page_config(page_title="AI Restaurant Assistant", page_icon="🍕", layout="centered")
+st.set_page_config(page_title="AI Restaurant Assistant", layout="wide")
 
-# ----------------------------
+# -----------------------------
 # Session state
-# ----------------------------
-if "session_id" not in st.session_state:
-    st.session_state.session_id = None
+# -----------------------------
+defaults = {
+    "session_id": None,
+    "preferences": {},
+    "answers": {},
+    "phase": "idle",              # idle | needs_clarification | complete
+    "pending_followup": [],       # list of questions
+    "result": None,               # final result dict
+    "last_query": "",             # remember query for continue
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
-if "result" not in st.session_state:
-    st.session_state.result = None
+# -----------------------------
+# Sidebar preferences
+# -----------------------------
+st.sidebar.header("Preferences")
 
-if "answers" not in st.session_state:
-    st.session_state.answers = {}
+kid = st.sidebar.checkbox("Kid-friendly", value=False)
+late = st.sidebar.checkbox("Open late", value=False)
+veg = st.sidebar.checkbox("Vegetarian options", value=False)
 
-if "preferences" not in st.session_state:
-    st.session_state.preferences = {}
+budget = st.sidebar.selectbox("Budget", ["Any", "budget", "mid", "high"], index=0)
 
-if "last_query" not in st.session_state:
-    st.session_state.last_query = ""
+# Always send booleans so backend treats them as answered (True/False, not missing)
+prefs = {
+    "kid_friendly": bool(kid),
+    "open_late": bool(late),
+    "vegetarian": bool(veg),
+}
+if budget != "Any":
+    prefs["budget"] = budget
 
+st.session_state.preferences = prefs
 
-# ----------------------------
-# Helpers
-# ----------------------------
-def post_analyze(query: str, preferences: dict, session_id: str | None, answers: dict) -> dict:
+# -----------------------------
+# Backend call helper
+# -----------------------------
+def call_backend(query: str):
     payload = {
         "query": query,
-        "preferences": preferences,
-        "session_id": session_id,
-        "answers": answers,
+        "preferences": st.session_state.preferences,
+        "session_id": st.session_state.session_id,
+        "answers": st.session_state.answers,
     }
-    resp = requests.post(API_URL, json=payload, timeout=90)
-    if resp.status_code != 200:
-        raise RuntimeError(f"{resp.status_code} | {resp.text}")
-    return resp.json()
+    r = requests.post(API_URL, json=payload, timeout=60)
+    r.raise_for_status()
+    return r.json()
 
-
-def reset_all():
-    st.session_state.session_id = None
-    st.session_state.result = None
-    st.session_state.answers = {}
-    st.session_state.preferences = {}
-    st.session_state.last_query = ""
-
-
-# ----------------------------
-# Sidebar preferences (kept)
-# ----------------------------
-with st.sidebar:
-    st.header("Preferences (optional)")
-
-    kid = st.checkbox("Kid friendly", value=bool(st.session_state.preferences.get("kid_friendly", False)))
-    late = st.checkbox("Open late", value=bool(st.session_state.preferences.get("open_late", False)))
-    veg = st.checkbox("Vegetarian / Vegan options", value=bool(st.session_state.preferences.get("vegetarian", False)))
-
-    budget = st.selectbox(
-        "Budget",
-        ["Any", "budget", "mid", "high"],
-        index=(["Any", "budget", "mid", "high"].index(st.session_state.preferences.get("budget", "Any"))
-               if st.session_state.preferences.get("budget", "Any") in ["Any", "budget", "mid", "high"] else 0)
-    )
-
-    show_debug = st.checkbox("Show debug", value=False)
-
-    if st.button("Reset"):
-        reset_all()
-        st.rerun()
-
-st.session_state.preferences = {}
-if kid:
-    st.session_state.preferences["kid_friendly"] = True
-if late:
-    st.session_state.preferences["open_late"] = True
-if veg:
-    st.session_state.preferences["vegetarian"] = True
-if budget != "Any":
-    st.session_state.preferences["budget"] = budget
-
-
-# ----------------------------
+# -----------------------------
 # Main UI
-# ----------------------------
+# -----------------------------
 st.title("🧠 AI Restaurant Analysis Assistant")
-st.caption("Multi-turn, progressive clarifying questions, preference-aware synthesis")
+st.caption("Multi-stage reasoning with grounded recommendations")
 
-query = st.text_input("What are you looking for?", value=st.session_state.last_query, placeholder="Pizza in Rome Italy")
-run = st.button("Analyze", type="primary", disabled=not query.strip())
+query = st.text_input(
+    "What are you looking for?",
+    value=st.session_state.last_query,
+    placeholder="e.g. pizza in Rome Italy, burger in Craig AK",
+)
 
-if run:
-    st.session_state.last_query = query.strip()
-    st.session_state.answers = {}  # new run clears follow-up answers
-    try:
-        with st.spinner("Analyzing…"):
-            res = post_analyze(
-                query=query.strip(),
-                preferences=st.session_state.preferences,
-                session_id=st.session_state.session_id,
-                answers=st.session_state.answers,
-            )
-        st.session_state.result = res
-        st.session_state.session_id = res.get("session_id", st.session_state.session_id)
-    except Exception as e:
-        st.error("Backend error")
-        st.code(str(e))
-        st.stop()
+col1, col2 = st.columns([1, 1])
 
-res = st.session_state.result
+with col1:
+    if st.button("Analyze", disabled=not query, key="analyze_btn"):
+        # New run → reset follow-up state, keep preferences
+        st.session_state.last_query = query
+        st.session_state.answers = {}
+        st.session_state.result = None
+        st.session_state.pending_followup = []
+        st.session_state.phase = "idle"
 
-if res and show_debug:
-    with st.expander("Debug response"):
-        st.json(res)
+        with st.spinner("Searching and analyzing…"):
+            try:
+                res = call_backend(query)
+            except Exception as e:
+                st.error("Backend error while analyzing")
+                st.exception(e)
+                st.stop()
 
-# ----------------------------
-# Clarification step (progressive)
-# ----------------------------
-if res and res.get("status") == "needs_clarification":
-    st.subheader("Quick questions to narrow it down")
+        st.session_state.session_id = res.get("session_id")
+        if res.get("status") == "needs_clarification":
+            st.session_state.phase = "needs_clarification"
+            st.session_state.pending_followup = res.get("follow_up", [])
+        else:
+            st.session_state.phase = "complete"
+            st.session_state.result = res
 
-    follow_up = res.get("follow_up", [])
-    if not follow_up and res.get("follow_up_questions"):
-        follow_up = [{"id": f"q{i}", "label": q, "type": "boolean"} for i, q in enumerate(res["follow_up_questions"])]
+with col2:
+    if st.button("Reset", key="reset_btn"):
+        st.session_state.session_id = None
+        st.session_state.answers = {}
+        st.session_state.phase = "idle"
+        st.session_state.pending_followup = []
+        st.session_state.result = None
+        st.session_state.last_query = ""
 
-    next_answers = {}
-    for q in follow_up:
-        qid = q.get("id")
-        label = q.get("label", "")
-        qtype = q.get("type", "boolean")
-        opts = q.get("options") or []
+# -----------------------------
+# Follow-up phase
+# -----------------------------
+if st.session_state.phase == "needs_clarification":
+    st.subheader("A quick clarification")
+
+    # Render exactly what backend asked, and store answers in session_state.answers
+    for q in st.session_state.pending_followup:
+        qid = q["id"]
+        qtype = q["type"]
+        label = q["label"]
         help_text = q.get("help")
 
         if qtype == "boolean":
-            next_answers[qid] = st.checkbox(label, help=help_text)
-
+            st.session_state.answers[qid] = st.checkbox(label, key=f"fu_{qid}")
         elif qtype == "choice":
-            if not opts:
-                opts = ["No preference"]
-            next_answers[qid] = st.radio(label, opts, horizontal=True, help=help_text)
-
-        elif qtype == "multi_choice":
-            next_answers[qid] = st.multiselect(label, opts, help=help_text)
-
+            st.session_state.answers[qid] = st.radio(label, q["options"], key=f"fu_{qid}")
         elif qtype == "text":
-            next_answers[qid] = st.text_input(label, help=help_text)
+            st.session_state.answers[qid] = st.text_input(label, key=f"fu_{qid}")
+        else:
+            st.warning(f"Unknown question type: {qtype}")
 
-    if st.button("Continue", type="primary"):
-        st.session_state.answers.update(next_answers)
+        if help_text:
+            st.caption(help_text)
 
-        # Clean: remove "No preference"/empty
-        cleaned = {}
-        for k, v in st.session_state.answers.items():
-            if isinstance(v, str) and v.strip().lower() in ["no preference", "any", ""]:
-                continue
-            if isinstance(v, list) and not v:
-                continue
-            cleaned[k] = v
-        st.session_state.answers = cleaned
+    if st.button("Continue →", key="continue_btn"):
+        with st.spinner("Refining recommendations…"):
+            try:
+                res = call_backend(st.session_state.last_query)
+            except Exception as e:
+                st.error("Backend error while continuing")
+                st.exception(e)
+                st.stop()
 
-        try:
-            with st.spinner("Refining…"):
-                res2 = post_analyze(
-                    query=st.session_state.last_query,
-                    preferences=st.session_state.preferences,
-                    session_id=st.session_state.session_id,
-                    answers=st.session_state.answers,
-                )
-            st.session_state.result = res2
-            st.session_state.session_id = res2.get("session_id", st.session_state.session_id)
-            st.rerun()
-        except Exception as e:
-            st.error("Backend error")
-            st.code(str(e))
-            st.stop()
+        st.session_state.session_id = res.get("session_id")
 
-# ----------------------------
-# Final results
-# ----------------------------
-if res and res.get("status") == "complete":
-    st.divider()
-    st.header(res.get("headline", "Restaurant analysis"))
+        if res.get("status") == "needs_clarification":
+            # Another question (one at a time)
+            st.session_state.phase = "needs_clarification"
+            st.session_state.pending_followup = res.get("follow_up", [])
+        else:
+            st.session_state.phase = "complete"
+            st.session_state.pending_followup = []
+            st.session_state.result = res
 
-    restaurants = res.get("restaurants", []) or []
-    if not restaurants:
-        st.warning("No restaurants returned.")
-    else:
-        for r in restaurants:
-            name = r.get("name", "Unknown")
-            summary = r.get("summary", "")
+# -----------------------------
+# Results phase
+# -----------------------------
+if st.session_state.phase == "complete" and st.session_state.result:
+    res = st.session_state.result
+    st.subheader(res.get("headline", "Recommendations"))
+
+    for r in res.get("restaurants", []):
+        st.markdown(f"### {r.get('name','')}")
+        st.write(r.get("summary",""))
+
+        cols = st.columns([1, 3])
+        with cols[0]:
+            if r.get("maps_url"):
+                st.link_button("📍 Google Maps", r["maps_url"])
+        with cols[1]:
             sources = r.get("sources", [])
+            if sources:
+                with st.expander("Sources"):
+                    for src in sources:
+                        st.markdown(f"- {src}")
 
-            with st.container(border=True):
-                st.subheader(name)
-                st.write(summary)
-
-                if sources:
-                    with st.expander("Sources"):
-                        for s in sources:
-                            if isinstance(s, str) and s.startswith("http"):
-                                st.markdown(f"- [{s}]({s})")
-                            else:
-                                st.markdown(f"- {s}")
-
-    st.caption(f"Confidence: **{res.get('confidence', 80)}%**")
-
-    learned = res.get("preferences", {})
-    if learned:
-        with st.expander("What I used to refine results"):
-            st.json(learned)
+    st.caption(f"Confidence: {res.get('confidence', 80)}%")
